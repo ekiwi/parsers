@@ -4,6 +4,7 @@
 # Copyright 2018, University of California, Berkeley
 # author: Kevin Laeufer <laeufer@cs.berkeley.edu>
 
+from collections import	defaultdict
 
 class Symbol:
 	def __init__(self, name, bold=False):
@@ -19,17 +20,43 @@ class Symbol:
 	def __repr__(self):
 		return self.name
 
+
 class NonTerminal(Symbol):
 	def __init__(self, name):
 		super().__init__(name, bold=True)
+
 
 class Terminal(Symbol):
 	def __init__(self, name):
 		super().__init__(name)
 
+
 class Epsilon(Terminal):
 	def __init__(self):
 		super().__init__("ε")
+
+
+class Rule:
+	def __init__(self, lhs, rhs):
+		assert isinstance(lhs, NonTerminal)
+		assert isinstance(rhs, list)
+		assert all(isinstance(sym, Symbol) for sym in rhs)
+		self.lhs = lhs
+		self.rhs = rhs
+
+	def __getitem__(self, item):
+		if item not in {0, 1}:
+			raise IndexError(item)
+		if item == 0:
+			return self.lhs
+		else:
+			return self.rhs
+
+	def __str__(self):
+		return f"{self.lhs} -> {''.join(str(sym) for sym in self.rhs)}"
+
+	def __repr__(self):
+		return str(self)
 
 class Grammar:
 	def __init__(self):
@@ -55,13 +82,10 @@ class Grammar:
 		return  self._syms[1]
 
 	def r(self, lhs, rhs):
-		assert isinstance(lhs, NonTerminal)
-		assert isinstance(rhs, list)
-		assert all(isinstance(sym, Symbol) for sym in rhs)
 		if len(rhs) < 1: rhs = [self.epsilon()]
 		if self._root is None:
 			self._root = lhs # by convention
-		self._rules.append((lhs, rhs))
+		self._rules.append(Rule(lhs, rhs))
 
 	def first(self, sym):
 		assert isinstance(sym, Symbol), f"{sym} : {type(sym)}"
@@ -110,6 +134,40 @@ class Grammar:
 			_follow |= {self.eof()}
 		return _follow
 
+	def ll_one(self, check_conflicts=False):
+		non_terms = [s for s in self._syms if isinstance(s, NonTerminal)]
+		table = defaultdict(dict)
+		for nt in non_terms:
+			terms = self.first(nt)
+			if self.epsilon() in terms:
+				terms = (terms - {self.epsilon()}) | self.follow(nt)
+			# pick rule:
+			for tt in terms:
+				applicable_rules = []
+				for rule in self._rules:
+					if rule.lhs != nt:
+						continue
+					# scan rhs
+					annullable = True
+					for sym in rule.rhs:
+						s_first = self.first(sym)
+						if tt in s_first:
+							applicable_rules.append(rule)
+							break
+						if not self.epsilon() in s_first:
+							annullable = False
+							break
+					if annullable and tt in self.follow(nt):
+						applicable_rules.append(rule)
+				if check_conflicts:
+					if len(applicable_rules) > 1:
+						raise RuntimeError(f"Found multiple applicable rules for ({nt}, {tt}):\n" +
+											'\n'.join(str(r) for r in applicable_rules))
+
+				table[nt][tt] = applicable_rules
+		return dict(table)
+
+
 
 if __name__ == "__main__":
 	g = Grammar()
@@ -131,3 +189,7 @@ if __name__ == "__main__":
 
 	for nt in non_term:
 		print(f"FOLLOW({nt}): {g.follow(nt)}")
+
+	print()
+
+	print(g.ll_one(check_conflicts=False))
